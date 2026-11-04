@@ -15,9 +15,16 @@
 sets a contextvar for the duration of the request, and resets it in
 ``finally`` -- this is the entire request-level isolation mechanism (AC7):
 nothing credential-related is ever stored at module level.
+
+Also sets ``request_id_var`` for the same duration (reusing hudu-mcp's
+``server.py`` pattern): a stateless, multi-tenant server can log several
+lines per tool call (see api_client.py's retry logging), and without a
+shared id there is no way to tell which lines belong to the same request,
+or to separate two tenants' concurrent requests in the log stream.
 """
 
 import contextvars
+import uuid
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -34,6 +41,7 @@ REQUIRED_HEADERS = [HEADER_CLIENT_ID, HEADER_SECRET, HEADER_ENV]
 _credentials_var: contextvars.ContextVar[PlaidCredentials | None] = contextvars.ContextVar(
     "plaid_credentials", default=None
 )
+request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("plaid_request_id", default="-")
 
 
 def get_client_credentials() -> PlaidCredentials | None:
@@ -80,8 +88,11 @@ class PlaidCredentialsMiddleware:
             )(scope, receive, send)
             return
 
-        token = _credentials_var.set(PlaidCredentials(client_id, secret, env))
+        request_id = (request.headers.get("x-request-id") or "").strip()[:64] or uuid.uuid4().hex[:12]
+        creds_token = _credentials_var.set(PlaidCredentials(client_id, secret, env))
+        rid_token = request_id_var.set(request_id)
         try:
             await self.app(scope, receive, send)
         finally:
-            _credentials_var.reset(token)
+            _credentials_var.reset(creds_token)
+            request_id_var.reset(rid_token)

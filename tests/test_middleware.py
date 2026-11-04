@@ -20,7 +20,14 @@ from starlette.testclient import TestClient
 
 from plaid_mcp.__main__ import build_http_app
 from plaid_mcp.api_client import PlaidCredentials
-from plaid_mcp.middleware import HEADER_CLIENT_ID, HEADER_ENV, HEADER_SECRET, REQUIRED_HEADERS, _credentials_var
+from plaid_mcp.middleware import (
+    HEADER_CLIENT_ID,
+    HEADER_ENV,
+    HEADER_SECRET,
+    REQUIRED_HEADERS,
+    _credentials_var,
+    request_id_var,
+)
 from plaid_mcp.server import create_mcp_server
 
 MCP_HEADERS = {"Accept": "application/json, text/event-stream"}
@@ -103,3 +110,104 @@ async def test_concurrent_requests_do_not_share_credentials_or_state():
     result_a, result_b = await asyncio.gather(run_as(creds_a), run_as(creds_b))
     assert (result_a, result_b) == ("client-a", "client-b")
     assert _credentials_var.get() is None  # reset outside any request
+
+
+# ---- review round 1 must-fix: request-id / correlation-id in the logging path ----
+#
+# Reuses hudu-mcp's pattern (server.py:46,128,130,135; __main__.py:27-39): a
+# contextvar set by the credentials middleware from an inbound x-request-id
+# header (or a generated id), and a logging.Filter that stamps it onto every
+# LogRecord so api_client.py / tools/_common.py need no per-call changes.
+
+
+def test_request_id_defaults_to_dash_outside_a_request():
+    assert request_id_var.get() == "-"
+
+
+async def test_inbound_request_id_header_is_threaded_through_and_reset_after():
+    from plaid_mcp.middleware import PlaidCredentialsMiddleware
+
+    seen: dict[str, str] = {}
+
+    async def inner_app(scope, receive, send) -> None:
+        seen["request_id"] = request_id_var.get()
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    middleware = PlaidCredentialsMiddleware(inner_app)
+    scope = {
+        "type": "http",
+        "path": "/mcp",
+        "headers": [
+            (b"x-plaid-client-id", b"client-1"),
+            (b"x-plaid-secret", b"super-secret-999"),
+            (b"x-plaid-env", b"sandbox"),
+            (b"x-request-id", b"caller-rid-123"),
+        ],
+    }
+
+    async def receive() -> dict:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(_message: dict) -> None:
+        pass
+
+    await middleware(scope, receive, send)
+    assert seen["request_id"] == "caller-rid-123"
+    assert request_id_var.get() == "-"  # reset outside any request
+
+
+async def test_missing_inbound_request_id_header_is_generated():
+    from plaid_mcp.middleware import PlaidCredentialsMiddleware
+
+    seen: dict[str, str] = {}
+
+    async def inner_app(scope, receive, send) -> None:
+        seen["request_id"] = request_id_var.get()
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    middleware = PlaidCredentialsMiddleware(inner_app)
+    scope = {
+        "type": "http",
+        "path": "/mcp",
+        "headers": [
+            (b"x-plaid-client-id", b"client-1"),
+            (b"x-plaid-secret", b"super-secret-999"),
+            (b"x-plaid-env", b"sandbox"),
+        ],
+    }
+
+    async def receive() -> dict:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(_message: dict) -> None:
+        pass
+
+    await middleware(scope, receive, send)
+    assert seen["request_id"] != "-"
+    assert seen["request_id"]  # non-empty, auto-generated
+
+
+def test_request_id_filter_stamps_the_current_contextvar_onto_log_records():
+    import logging
+
+    from plaid_mcp.__main__ import _RequestIdFilter
+
+    token = request_id_var.set("unit-test-rid")
+    try:
+        record = logging.LogRecord("plaid_mcp.api", logging.INFO, __file__, 1, "msg", None, None)
+        assert _RequestIdFilter().filter(record) is True
+        assert record.request_id == "unit-test-rid"
+    finally:
+        request_id_var.reset(token)
+
+
+def test_request_id_filter_defaults_to_dash_outside_a_request():
+    import logging
+
+    from plaid_mcp.__main__ import _RequestIdFilter
+
+    record = logging.LogRecord("plaid_mcp.api", logging.INFO, __file__, 1, "msg", None, None)
+    assert _RequestIdFilter().filter(record) is True
+    assert record.request_id == "-"

@@ -22,13 +22,28 @@ from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 
 from .config import Settings, get_settings
-from .middleware import PlaidCredentialsMiddleware
+from .middleware import PlaidCredentialsMiddleware, request_id_var
 from .server import create_mcp_server
+
+
+class _RequestIdFilter(logging.Filter):
+    """Stamps the current request's id (set by PlaidCredentialsMiddleware) onto
+    every LogRecord, so api_client.py and tools/_common.py need no per-call
+    changes to carry it -- same pattern as hudu-mcp's __main__.py."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = request_id_var.get()
+        return True
 
 
 def configure_logging(level: str) -> None:
     handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter("ts=%(asctime)s level=%(levelname)s logger=%(name)s %(message)s"))
+    handler.addFilter(_RequestIdFilter())
+    handler.setFormatter(
+        logging.Formatter(
+            "ts=%(asctime)s level=%(levelname)s logger=%(name)s request_id=%(request_id)s %(message)s"
+        )
+    )
     root = logging.getLogger()
     root.handlers[:] = [handler]
     root.setLevel(level.upper())
