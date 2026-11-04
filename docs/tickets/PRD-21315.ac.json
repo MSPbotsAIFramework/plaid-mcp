@@ -4,14 +4,18 @@
     "ac": "AC1",
     "text": "Given valid X-Plaid-Client-Id/X-Plaid-Secret/X-Plaid-Env headers and products=[\"transactions\",\"auth\"], when plaid_create_link_token is called, then it returns a non-empty hosted_link_url and link_token",
     "type": "auto",
-    "tests": ["tests/test_tools.py::test_create_link_token_returns_hosted_link_url_and_token"]
+    "tests": ["tests/test_tools.py::test_create_link_token_returns_hosted_link_url_and_token"],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_create_link_token_returns_hosted_link_url_and_token -> 1 passed"
   },
   {
     "id": "TC2",
     "ac": "AC2",
     "text": "Given a request with X-Plaid-Secret omitted, when any tool is called, then it returns HTTP 401 with a body listing all three required header names, and the body contains no secret value",
     "type": "auto",
-    "tests": ["tests/test_middleware.py::test_missing_secret_header_returns_401_without_echoing_value"]
+    "tests": ["tests/test_middleware.py::test_missing_secret_header_returns_401_without_echoing_value"],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_middleware.py::test_missing_secret_header_returns_401_without_echoing_value -> 1 passed; also reproduced manually: curl -s -o /dev/null -w '%{http_code}' POST /mcp with no X-Plaid-* headers -> 401 (see Self-test)"
   },
   {
     "id": "TC3",
@@ -19,7 +23,9 @@
     "text": "Given a link_token whose Hosted Link session has not completed, when plaid_get_link_session is called, then it reports status=pending with no public_token",
     "type": "auto",
     "tests": ["tests/test_tools.py::test_get_link_session_reports_pending_before_completion"],
-    "notes": "source: sandbox"
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_get_link_session_reports_pending_before_completion -> 1 passed",
+    "notes": "source: sandbox in the design, but executed here against a stubbed /link/token/get response shaped per Plaid's documented schema, not a live Sandbox call -- see Self-test 'Flagged assumption'"
   },
   {
     "id": "TC4",
@@ -35,7 +41,7 @@
     "expect": "status=completed, public_token is a non-empty string, institution.name matches the one chosen in the browser",
     "result": "untested",
     "evidence": "",
-    "notes": "needs a real vendor account (Plaid Sandbox signup) and a human to click through Hosted Link; not a blocker per SOP \"no test account != blocked\""
+    "notes": "needs a real vendor account (Plaid Sandbox signup) and a human to click through Hosted Link; not a blocker per SOP \"no test account != blocked\". Also the moment to confirm the exact link_sessions/results JSON shape plaid_get_link_session assumes -- see Self-test 'Flagged assumption'."
   },
   {
     "id": "TC5",
@@ -43,7 +49,9 @@
     "text": "Given a link_token created with an already-elapsed url_lifetime_seconds, when plaid_get_link_session is called, then it reports status=expired",
     "type": "auto",
     "tests": ["tests/test_tools.py::test_get_link_session_reports_expired_after_lifetime"],
-    "notes": "source: sandbox"
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_get_link_session_reports_expired_after_lifetime -> 1 passed",
+    "notes": "source: sandbox in the design, but executed here against a stub with a past expiration timestamp, not a live Sandbox call"
   },
   {
     "id": "TC6",
@@ -51,7 +59,9 @@
     "text": "Given a public_token from /sandbox/public_token/create, when plaid_exchange_public_token is called, then it returns a non-empty access_token and item_id, and the access_token value never appears in the server's log output for that request",
     "type": "auto",
     "tests": ["tests/test_tools.py::test_exchange_public_token_returns_access_token_and_item_id_not_logged"],
-    "notes": "source: sandbox"
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_exchange_public_token_returns_access_token_and_item_id_not_logged -> 1 passed (asserts the literal access_token value is absent from captured log output)",
+    "notes": "source: sandbox in the design, but executed here against a stubbed /item/public_token/exchange response, not a live Sandbox call"
   },
   {
     "id": "TC7",
@@ -59,7 +69,9 @@
     "text": "Given a valid access_token, when plaid_get_accounts is called with refresh_balances=false, then it returns accounts each with a balances object, served from Plaid's cached endpoint",
     "type": "auto",
     "tests": ["tests/test_tools.py::test_get_accounts_default_uses_cached_balances"],
-    "notes": "source: sandbox"
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_get_accounts_default_uses_cached_balances -> 1 passed (asserts POST went to /accounts/get, not /accounts/balance/get)",
+    "notes": "source: sandbox in the design, but executed here against a stub, not a live Sandbox call"
   },
   {
     "id": "TC8",
@@ -67,7 +79,9 @@
     "text": "Given the same access_token, when plaid_get_accounts is called with refresh_balances=true, then it returns the same accounts via the live-balance endpoint (distinct upstream call path from TC7, asserted against a request stub in unit tests)",
     "type": "auto",
     "tests": ["tests/test_tools.py::test_get_accounts_refresh_balances_calls_live_balance_endpoint"],
-    "notes": "source: sandbox + stub assertion"
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_get_accounts_refresh_balances_calls_live_balance_endpoint -> 1 passed (asserts POST went to /accounts/balance/get, not /accounts/get)",
+    "notes": "source: sandbox + stub assertion in the design; the stub-assertion half is executed here, the live-sandbox half is not (see TC4)"
   },
   {
     "id": "TC9",
@@ -75,7 +89,9 @@
     "text": "Given a valid access_token and no cursor, when plaid_sync_transactions is called, then it returns a non-empty added list and a next_cursor",
     "type": "auto",
     "tests": ["tests/test_tools.py::test_sync_transactions_first_call_returns_added_and_cursor"],
-    "notes": "source: sandbox"
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_sync_transactions_first_call_returns_added_and_cursor -> 1 passed",
+    "notes": "source: sandbox in the design, but executed here against a stub, not a live Sandbox call"
   },
   {
     "id": "TC10",
@@ -83,14 +99,18 @@
     "text": "Given the next_cursor from TC9 with no new sandbox activity since, when plaid_sync_transactions is called again with that cursor, then added/modified/removed are all empty and has_more is false",
     "type": "auto",
     "tests": ["tests/test_tools.py::test_sync_transactions_second_call_with_cursor_returns_no_changes"],
-    "notes": "source: sandbox"
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_sync_transactions_second_call_with_cursor_returns_no_changes -> 1 passed",
+    "notes": "source: sandbox in the design, but executed here against a stub, not a live Sandbox call"
   },
   {
     "id": "TC11",
     "ac": "AC7",
     "text": "Given two concurrent requests carrying different client_id/secret pairs against stubbed upstream responses, when both are handled at once, then each response contains only its own request's stub data and no state object is shared between the two contexts",
     "type": "auto",
-    "tests": ["tests/test_middleware.py::test_concurrent_requests_do_not_share_credentials_or_state"]
+    "tests": ["tests/test_middleware.py::test_concurrent_requests_do_not_share_credentials_or_state"],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_middleware.py::test_concurrent_requests_do_not_share_credentials_or_state -> 1 passed (asyncio.gather of two tasks with distinct contextvar credentials and a shared counter; each task observes only its own client_id after yielding)"
   },
   {
     "id": "TC12",
@@ -98,7 +118,9 @@
     "text": "Given an access_token for an Item linked only with the transactions product, when plaid_get_investments_holdings is called, then it returns an invalid_argument error envelope naming the missing product, not an exception",
     "type": "auto",
     "tests": ["tests/test_tools.py::test_get_investments_holdings_without_product_returns_invalid_argument"],
-    "notes": "source: sandbox"
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_get_investments_holdings_without_product_returns_invalid_argument -> 1 passed",
+    "notes": "source: sandbox in the design, but executed here against a stubbed 400 INVALID_PRODUCT response, not a live Sandbox call"
   },
   {
     "id": "TC13",
@@ -106,43 +128,59 @@
     "text": "Given an Item without the liabilities product enabled, when plaid_get_liabilities is called, then it returns the same class of structured invalid_argument error",
     "type": "auto",
     "tests": ["tests/test_tools.py::test_get_liabilities_without_product_returns_invalid_argument"],
-    "notes": "source: sandbox"
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_get_liabilities_without_product_returns_invalid_argument -> 1 passed",
+    "notes": "source: sandbox in the design, but executed here against a stub, not a live Sandbox call"
   },
   {
     "id": "TC14",
     "ac": "AC9",
     "text": "Given plaid_remove_item is called with confirm=false (or omitted) and a valid access_token, when the call is made, then it returns an invalid_argument error asking for confirm=true and no request is sent to Plaid",
     "type": "auto",
-    "tests": ["tests/test_tools.py::test_remove_item_without_confirm_is_refused_and_makes_no_call"]
+    "tests": ["tests/test_tools.py::test_remove_item_without_confirm_is_refused_and_makes_no_call"],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_remove_item_without_confirm_is_refused_and_makes_no_call -> 1 passed (asserts zero requests reached the stub transport)"
   },
   {
     "id": "TC15",
     "ac": "AC9",
     "text": "Given plaid_remove_item is called with confirm=true and a valid access_token, when the call succeeds, then a subsequent plaid_get_item call with the same access_token returns an item-not-found-shaped error",
     "type": "auto",
-    "tests": ["tests/test_tools.py::test_remove_item_with_confirm_true_removes_item"],
-    "notes": "source: sandbox"
+    "tests": ["tests/test_tools.py::test_remove_item_with_confirm_true_removes_item_then_get_item_reports_missing"],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_remove_item_with_confirm_true_removes_item_then_get_item_reports_missing -> 1 passed",
+    "notes": "source: sandbox in the design, but executed here against stubbed /item/remove and /item/get (ITEM_NOT_FOUND) responses, not a live Sandbox call"
   },
   {
     "id": "TC16",
     "ac": "AC10",
     "text": "Given a stubbed upstream returning HTTP 429 with Retry-After: 1 twice then succeeding, when a tool call is made, then the client retries twice honoring the header and returns the successful result, with elapsed time close to 2s",
     "type": "auto",
-    "tests": ["tests/test_tools.py::test_rate_limited_retry_honors_retry_after_header"]
+    "tests": ["tests/test_tools.py::test_retries_429_honoring_retry_after_then_succeeds"],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_retries_429_honoring_retry_after_then_succeeds -> 1 passed (3 total calls, both honored delays recorded as 1.0s each; asyncio.sleep is mocked to run instantly -- same no-real-sleep convention as hudu-mcp's tests -- so the ~2s figure is derived from the two recorded 1.0s delays, not measured wall-clock time)"
   },
   {
     "id": "TC17",
     "ac": "AC10",
     "text": "Given a stubbed upstream returning HTTP 429 on every attempt, when a tool call is made, then the client retries up to its cap and returns a rate_limited, retryable=true error envelope rather than hanging past the call budget",
     "type": "auto",
-    "tests": ["tests/test_tools.py::test_rate_limited_exhausted_retries_returns_retryable_error"]
+    "tests": ["tests/test_tools.py::test_rate_limit_exhausted_returns_retryable_error"],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_rate_limit_exhausted_returns_retryable_error -> 1 passed (3 total calls: initial + 2 retries, then gives up and returns {code: rate_limited, retryable: true})"
   },
   {
     "id": "TC18",
     "ac": "AC1",
     "text": "Given the server has started, when tools/list is called, then it returns exactly 11 tools matching the Data & API contract table, none with a description over 500 characters or a first line over 100",
     "type": "auto",
-    "tests": ["tests/test_tools.py::test_tools_list_snapshot_has_11_tools_with_valid_descriptions"],
-    "notes": "snapshot test, not tied to a single functional AC beyond AC1's tool surface"
+    "tests": [
+      "tests/test_tools.py::test_tool_names_are_stable",
+      "tests/test_tools.py::test_required_arguments_match_contract",
+      "tests/test_tools.py::test_descriptions_are_short"
+    ],
+    "result": "pass",
+    "evidence": "uv run pytest tests/test_tools.py::test_tool_names_are_stable tests/test_tools.py::test_required_arguments_match_contract tests/test_tools.py::test_descriptions_are_short -> 3 passed; also confirmed live over HTTP: a real initialize + tools/list round trip against the running server (placeholder headers) returned exactly 11 tools with matching names (see Self-test)",
+    "notes": "split into three focused tests (names, required-argument shapes, description-length rule) instead of one combined test; same AC, different execution shape -- this is dev's choice of how to judge, not a change to what AC1 requires"
   }
 ]
