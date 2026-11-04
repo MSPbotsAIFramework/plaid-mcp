@@ -1,0 +1,8 @@
+Plaid MCP Server
+Copyright 2026 MSPbots.ai
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+"Plaid" is a trademark of its respective owner. This project is an
+independent integration that calls the documented Plaid API; it contains no
+Plaid source code and is not affiliated with or endorsed by Plaid.

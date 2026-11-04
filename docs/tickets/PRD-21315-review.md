@@ -1,0 +1,48 @@
+# PRD-21315 · Code review
+
+Status: frozen @ 67ee52a
+
+## Round 1 · 2026-11-04 · reviewed dev/PRD-21315 @ 30100be (base main @ 54056ec)
+
+Verdict: changes requested
+
+### Findings
+
+1. [must-fix] `src/plaid_mcp/api_client.py:176-179`, `src/plaid_mcp/tools/_common.py:78-89`, `src/plaid_mcp/__main__.py:31` — no request-id / correlation-id anywhere in the logging path. SOP §6 ("日志与可观测性") requires structured logs to carry a request-id/correlation-id per request ("每条带 request-id / 关联 id，便于串联一次请求"), and §14's delivery checklist repeats this under 日志与敏感信息 ("结构化日志带 request-id"); `mcp-track.md` §4.3 lists "SOP §14 Checklist" as one of the explicit must-fix criteria for vendor-mcp review. The tech design's own Non-functional → Observability section claims this service's logging is "same shape as `hudu-mcp`'s `api_client.py`", but `hudu-mcp` actually implements a `request_id_var` contextvar (read from an inbound `x-request-id` header or generated with `uuid4` in its middleware, `server.py:46,128,130,135`) and injects it into every log line via the formatter (`request_id=%(request_id)s`, `__main__.py:39`). plaid-mcp has no equivalent: `PlaidCredentialsMiddleware` (`middleware.py`) sets no id, `configure_logging()`'s formatter (`__main__.py:31`) has no `request_id` field, and every `logger.info`/`logger.warning` call in `api_client.py` and `tools/_common.py` logs only `path`/`status`/`tool`/`outcome`/`ms`. Concretely: this is a stateless server handling concurrent multi-tenant requests (AC7) where a single tool call can log 1 line in `_common.py` plus up to 3 lines in `api_client.py` (initial attempt + 2 retries) — with no id tying them together, and no way to separate two overlapping tenants' log lines in production, the exact failure mode the SOP calls this requirement out to prevent. Fix: add the same contextvar + middleware + formatter pattern `hudu-mcp` already uses (reuse, not new design).
+
+### Suggestions
+
+2. `src/plaid_mcp/tools/liabilities.py:40-42` — `payload.get("liabilities", {}).get("student")` (and `credit`/`mortgage`) breaks if Plaid ever returns `"liabilities": null` in a 200 body: the `{}` default only applies when the key is absent, so an explicit `null` makes `.get()` run on `None` and raises `AttributeError`. Every sibling file uses the `payload.get(X) or {}` idiom instead (e.g. `item.py:29`: `item = payload.get("item") or {}`), which tolerates both "missing" and "present but null". Low practical odds — the documented not-enabled case already short-circuits through a 4xx `PlaidError` before this line runs — but worth aligning with the idiom used everywhere else in this same PR for consistency, since `run_tool`'s catch-all would turn it into a misleading `upstream_error` instead of the intended empty list.
+3. `src/plaid_mcp/tools/transactions.py:29-36` / `config.py:25-26` — `count` defaults to 100 and caps at 500 for `plaid_sync_transactions`, above SOP §14's "应当" (should) guidance for list tools (default ≤ 50, hard cap ≤ 200). The chosen ceiling matches Plaid's own `/transactions/sync` limit, which is a defensible reason, but it isn't recorded as a deliberate SOP exception anywhere — `docs/tickets/PRD-21315.md`'s "Decisions made by DEV01" section doesn't mention it. Not blocking (this bullet is "应当", not "必须"), but add a one-line note there so a future reviewer doesn't have to re-derive the reasoning.
+4. SOP §14 "应当" item "用 Agent 真实跑通一遍典型业务流程，确认靠 description 能选对工具" wasn't exercised this round — Self-test's live check only drove `initialize`/`tools/list` over HTTP with placeholder headers, not a full `plaid_create_link_token` → `plaid_get_link_session` → `plaid_exchange_public_token` → data-tool round trip through an actual agent. Same root cause as TC4 (no real Plaid Sandbox account yet), so not something this round could have done differently — flagging only so it isn't forgotten once an account is available.
+
+### Fixes (round 1)
+
+1. [must-fix #1, request-id/correlation-id] Fixed at `ec7e9d8`. Reused hudu-mcp's pattern exactly as the finding suggested (no new design):
+   - `src/plaid_mcp/middleware.py`: added `request_id_var` (a `contextvars.ContextVar[str]`, default `"-"`). `PlaidCredentialsMiddleware.__call__` now reads the inbound `x-request-id` header (truncated to 64 chars) or generates one with `uuid.uuid4().hex[:12]` when absent, sets it alongside the existing credentials var, and resets both in `finally`.
+   - `src/plaid_mcp/__main__.py`: added `_RequestIdFilter(logging.Filter)` that stamps `record.request_id = request_id_var.get()` onto every `LogRecord`; `configure_logging()`'s formatter now includes `request_id=%(request_id)s`. This means `api_client.py` and `tools/_common.py` needed **no changes** to their `logger.info`/`logger.warning` calls — every line they already emit now carries the id for free, same as hudu-mcp.
+   - Tests added in `tests/test_middleware.py` (5 new, 49 total, all passing under `uv run pytest`): default `"-"` outside a request; inbound header is threaded through and reset after; missing header is auto-generated; `_RequestIdFilter` stamps the current contextvar onto a `LogRecord`; defaults to `"-"` when no request is active.
+   - Live re-check (local server, placeholder credentials): `GET /health` → 200, `request_id=-` (outside `/mcp`, as expected). `POST /mcp initialize` with `x-request-id: smoke-test-rid-42` → 200, access log line shows `request_id=smoke-test-rid-42`. `POST /mcp tools/list` with `x-request-id: smoke-test-rid-43` → 200, 11 tools returned, both the access-log line and the `mcp.server.lowlevel.server` tool-dispatch line show `request_id=smoke-test-rid-43` — confirms multiple log lines from the same request now correlate. `POST /mcp` with no credential headers → 401 (unchanged).
+2. Suggestions #2–4 are not must-fix and were left as-is per the review-rework rule (only must-fix items are addressed in a rework round); #3 and #4 remain open for the next full design/dev pass or a real Plaid Sandbox account.
+
+Retest: `uv run pytest` → 49 passed (was 44 before this round's 5 new tests), 0 failures, 0 new skips. No other files touched.
+
+## Round 2 · 2026-11-04 · reviewed dev/PRD-21315 @ 67ee52a (base main @ 54056ec)
+
+Verdict: approved
+
+### Round 1 must-fix check
+
+1. [must-fix #1, request-id/correlation-id] **Resolved.** Confirmed by reading the diff (`3704ac3...67ee52a`) and by independently re-running the gate: `uv sync && uv run pytest` -> 49 passed, 0 failures (matches the `[DEV]` stub's claim). `middleware.py`'s `PlaidCredentialsMiddleware` now sets `request_id_var` (contextvar, default `"-"`) from an inbound `x-request-id` header or a generated `uuid4().hex[:12]`, alongside the existing credentials var, and resets both in `finally`. `__main__.py`'s new `_RequestIdFilter` stamps `record.request_id` onto every `LogRecord` passing through the root handler, and the formatter now includes `request_id=%(request_id)s` — so `api_client.py` and `tools/_common.py` need no per-call changes, exactly as the Fixes note describes. Traced the only early-return path in the middleware (the 401 for missing/invalid credentials, `middleware.py:72-84`): no log line is emitted there, so the one path that runs before `request_id_var` is set never needed correlation in the first place — the fix covers every log line that exists in this repo today. New tests in `tests/test_middleware.py` (5 added, exercising default, inbound-header, missing-header/generated, and the filter directly) are behavioral, not tautological, and pass.
+
+### New findings (this round's diff only)
+
+5. [suggestion] `src/plaid_mcp/middleware.py:91` — `request_id = (request.headers.get("x-request-id") or "").strip()[:64] or uuid.uuid4().hex[:12]` does not strip control characters (e.g. `\r`/`\n`) from a caller-supplied `x-request-id` before it is interpolated into the log line (`request_id=%(request_id)s` in `__main__.py`). An authenticated caller (one who already has valid `X-Plaid-Client-Id`/`X-Plaid-Secret`/`X-Plaid-Env` for their own tenant — this header is only read after the credentials check passes) could set `x-request-id: real\n ts=... level=CRITICAL fake forged line` and have it rendered as if it were additional, independent log output (CWE-117, log injection). Not treated as a must-fix because this is a byte-for-byte reuse of the org's existing, already-shipped `hudu-mcp` pattern (`hudu-mcp/src/hudu_mcp/server.py:128`, confirmed identical on `main@7e85fc0`) — round 1's must-fix explicitly asked for "the same contextvar + middleware + formatter pattern hudu-mcp already uses (reuse, not new design)", and the fix did exactly that, correctly. Worth a one-line note in a future design pass (this repo or hudu-mcp) to strip `[\r\n\t\x00-\x1f]` from the header value before use, since the gap is in the shared pattern, not unique to this PR.
+
+Suggestions #2-4 from round 1 were not in scope for this rework round (review-rework rule: only must-fix items are addressed) and remain open, unchanged.
+
+### Conclusion
+
+0 must-fix outstanding (round 1's one must-fix is fixed and verified); 1 new suggestion (#5, shared with the org pattern, not blocking) + suggestions #2-4 from round 1 still open for a future pass. Approved for merge.
+
+Status: frozen @ 67ee52a
