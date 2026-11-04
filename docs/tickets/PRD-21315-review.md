@@ -1,5 +1,7 @@
 # PRD-21315 · Code review
 
+Status: frozen @ 67ee52a
+
 ## Round 1 · 2026-11-04 · reviewed dev/PRD-21315 @ 30100be (base main @ 54056ec)
 
 Verdict: changes requested
@@ -24,3 +26,23 @@ Verdict: changes requested
 2. Suggestions #2–4 are not must-fix and were left as-is per the review-rework rule (only must-fix items are addressed in a rework round); #3 and #4 remain open for the next full design/dev pass or a real Plaid Sandbox account.
 
 Retest: `uv run pytest` → 49 passed (was 44 before this round's 5 new tests), 0 failures, 0 new skips. No other files touched.
+
+## Round 2 · 2026-11-04 · reviewed dev/PRD-21315 @ 67ee52a (base main @ 54056ec)
+
+Verdict: approved
+
+### Round 1 must-fix check
+
+1. [must-fix #1, request-id/correlation-id] **Resolved.** Confirmed by reading the diff (`3704ac3...67ee52a`) and by independently re-running the gate: `uv sync && uv run pytest` -> 49 passed, 0 failures (matches the `[DEV]` stub's claim). `middleware.py`'s `PlaidCredentialsMiddleware` now sets `request_id_var` (contextvar, default `"-"`) from an inbound `x-request-id` header or a generated `uuid4().hex[:12]`, alongside the existing credentials var, and resets both in `finally`. `__main__.py`'s new `_RequestIdFilter` stamps `record.request_id` onto every `LogRecord` passing through the root handler, and the formatter now includes `request_id=%(request_id)s` — so `api_client.py` and `tools/_common.py` need no per-call changes, exactly as the Fixes note describes. Traced the only early-return path in the middleware (the 401 for missing/invalid credentials, `middleware.py:72-84`): no log line is emitted there, so the one path that runs before `request_id_var` is set never needed correlation in the first place — the fix covers every log line that exists in this repo today. New tests in `tests/test_middleware.py` (5 added, exercising default, inbound-header, missing-header/generated, and the filter directly) are behavioral, not tautological, and pass.
+
+### New findings (this round's diff only)
+
+5. [suggestion] `src/plaid_mcp/middleware.py:91` — `request_id = (request.headers.get("x-request-id") or "").strip()[:64] or uuid.uuid4().hex[:12]` does not strip control characters (e.g. `\r`/`\n`) from a caller-supplied `x-request-id` before it is interpolated into the log line (`request_id=%(request_id)s` in `__main__.py`). An authenticated caller (one who already has valid `X-Plaid-Client-Id`/`X-Plaid-Secret`/`X-Plaid-Env` for their own tenant — this header is only read after the credentials check passes) could set `x-request-id: real\n ts=... level=CRITICAL fake forged line` and have it rendered as if it were additional, independent log output (CWE-117, log injection). Not treated as a must-fix because this is a byte-for-byte reuse of the org's existing, already-shipped `hudu-mcp` pattern (`hudu-mcp/src/hudu_mcp/server.py:128`, confirmed identical on `main@7e85fc0`) — round 1's must-fix explicitly asked for "the same contextvar + middleware + formatter pattern hudu-mcp already uses (reuse, not new design)", and the fix did exactly that, correctly. Worth a one-line note in a future design pass (this repo or hudu-mcp) to strip `[\r\n\t\x00-\x1f]` from the header value before use, since the gap is in the shared pattern, not unique to this PR.
+
+Suggestions #2-4 from round 1 were not in scope for this rework round (review-rework rule: only must-fix items are addressed) and remain open, unchanged.
+
+### Conclusion
+
+0 must-fix outstanding (round 1's one must-fix is fixed and verified); 1 new suggestion (#5, shared with the org pattern, not blocking) + suggestions #2-4 from round 1 still open for a future pass. Approved for merge.
+
+Status: frozen @ 67ee52a
